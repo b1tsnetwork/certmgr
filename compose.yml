@@ -1,0 +1,61 @@
+services:
+  certmanager:
+    build: .
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      LISTEN_ADDR: 0.0.0.0:8080
+      USERS_JSON: ${USERS_JSON:-}
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      APP_SECRET: ${APP_SECRET:-}
+      MASTER_KEY: ${MASTER_KEY:-}
+      CERT_NAMES: ${CERT_NAMES:-}
+      CERT_SAN_RULES: ${CERT_SAN_RULES:-}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      DATA_DIR: /data
+      CERT_SOURCE_DIR: /handoff
+      ROOT_CA_DIR: /roots
+      SCRATCH_DIR: /scratch
+      POLL_INTERVAL: 5m
+      EXPORT_UNENCRYPTED_KEYS: "false"
+    volumes:
+      - cert-data:/data
+      - cert-handoff:/handoff:ro
+      - ./roots:/roots:ro
+    tmpfs:
+      - /scratch:uid=10001,gid=10001,mode=0700,size=64m
+
+  # One isolated Certbot worker manages all lineages. Activate via:
+  # docker compose --profile acme up -d --build
+  certbot:
+    image: certbot/dns-cloudflare:latest
+    profiles: [acme]
+    restart: unless-stopped
+    entrypoint: ["python", "/opt/ucng/certbot-runner.py"]
+    environment:
+      ACME_RUN_INTERVAL: ${ACME_RUN_INTERVAL:-43200}
+      ACME_INTERNAL_KID: ${ACME_INTERNAL_KID:-}
+      ACME_INTERNAL_HMAC: ${ACME_INTERNAL_HMAC:-}
+    volumes:
+      - cert-data:/catalog:ro
+      - cert-handoff:/handoff
+      - letsencrypt-config:/etc/letsencrypt
+      - letsencrypt-work:/var/lib/letsencrypt
+      - letsencrypt-logs:/var/log/letsencrypt
+      - ./scripts/certbot-deploy-hook.sh:/opt/ucng/certbot-deploy-hook.sh:ro
+      - ./scripts/certbot-runner.py:/opt/ucng/certbot-runner.py:ro
+      - ./certbot-credentials:/run/secrets:ro
+      - ./acme-hooks:/hooks:ro
+      - ./acme-ca:/run/acme-ca:ro
+
+volumes:
+  cert-data:
+  cert-handoff:
+  letsencrypt-config:
+  letsencrypt-work:
+  letsencrypt-logs:

@@ -1,0 +1,12 @@
+.env
+secrets/*
+!secrets/.gitkeep
+certbot-credentials/*
+!certbot-credentials/.gitkeep
+acme-ca/*
+!acme-ca/.gitkeep
+/data/
+/handoff/
+/scratch/
+__pycache__/
+*.pyc
