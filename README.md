@@ -1,6 +1,6 @@
-# UCNG Certificate Manager v3
+# UCNG Certificate Manager v3.1.2
 
-Zentrale Zertifikatsverwaltung in Go: mehrere Wildcard-Zertifikate, ACME-Profile (Let's Encrypt / Staging / interne ACME), Dienste-Inventar mit Format-Checkboxen, passwortgeschütztes Web-CMS für mehrere Benutzer, öffentliche Zertifikatsdownloads und tokenpflichtiger Abruf von Private Keys/PFX.
+Zentrale Zertifikatsverwaltung in Go: mehrere Wildcard-Zertifikate, ACME-Profile (Let's Encrypt / Staging / interne ACME), Dienste-Inventar mit Format-Checkboxen, direkten Datei-Uploads (Key/CRT/CA), passwortgeschütztes Web-CMS für mehrere Benutzer, öffentliche Zertifikatsdownloads und tokenpflichtiger Abruf von Private Keys/PFX.
 
 **Architektur:** Ein Go-Webdienst + **ein** optionaler isolierter Certbot-Worker. Der Worker liest die Profil- und Zertifikatszuordnungen regelmäßig aus dem gemeinsam genutzten Katalog; pro ACME-Profil werden separate Certbot-Konfigurations-, Arbeits- und Log-Verzeichnisse verwendet. Der Go-Dienst hat keinen direkten Zugriff auf DNS-/ACME-Zugangsdaten oder auf das ausführbare Certbot. Für jeden Dienst können die freigegebenen Dateien einzeln festgelegt werden.
 
@@ -32,7 +32,70 @@ COOKIE_SECURE=true
 docker compose up -d --build
 ```
 
+**Berechtigungen des Daten-Volumes (v3.1.1):** Vor dem Webdienst läuft
+`cert-data-init` als einmaliger Init-Container. Dieser Container benötigt nur
+`CHOWN`, `DAC_OVERRIDE` und `FOWNER`, hat **kein Netzwerk** und korrigiert die
+Eigentümerschaft des Docker-Volumes `cert-data` auf UID/GID `10001:10001`.
+Der Webdienst bleibt mit `USER 10001:10001`, `read_only: true` und
+`cap_drop: [ALL]` abgesichert. Das funktioniert auch mit Volumes aus v3.1:
+**bestehende Zertifikate und Schlüssel werden nicht gelöscht.**
+
+Wenn du nur die neue `compose.yml` einspielst, reicht:
+
+```bash
+docker compose up -d certmanager
+# optional mit Certbot-Worker:
+docker compose --profile acme up -d
+```
+
+Falls die Fehlermeldung `mkdir /data/certificates: permission denied` schon
+aufgetreten ist und du die Compose-Datei noch nicht aktualisieren kannst,
+führe einmalig folgenden Befehl im Projektverzeichnis aus:
+
+```bash
+docker compose run --rm --no-deps --user 0 \
+  --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER \
+  --entrypoint sh certmanager \
+  -c 'chown -R 10001:10001 /data && chmod 0700 /data'
+```
+
+**Kein `docker compose down -v` ausführen:** Das würde die gespeicherten
+Zertifikate, Tokens und den Katalog entfernen. Bei NFS-/CIFS-Bind-Mounts mit
+Root-Squash muss die UID/GID `10001` auf dem Storage-Server Schreibrechte
+bekommen; in diesem Fall kann der Init-Container `chown` nicht erzwingen.
+
 Es läuft zunächst **nur der Go-Dienst** auf `127.0.0.1:8089`. Anmeldung über `/admin/login`, öffentlicher Bereich unter `/public`. Vor dem Zugriff über das Netzwerk einen HTTPS-Reverse-Proxy konfigurieren. Für reine lokale Tests kann alternativ gelten: `go run .` mit zuvor exportierten Variablen aus der `.env` (Go lädt `.env` nicht automatisch).
+
+## 1a. Manueller Upload: Key und CRT direkt im Browser (v3.1.2)
+
+Kein Einhängen und Umbenennen von Dateien im Handoff-Verzeichnis mehr nötig:
+
+1. Im Webinterface anmelden (`/admin/login`).
+2. Ein bestehendes Zertifikat aus der Übersicht öffnen oder ein neues anlegen.
+3. Unter **Zertifikatsdaten** das Profil **Manuell / Web-Upload** auswählen und sicherstellen, dass die erwarteten DNS-Namen (SAN) korrekt eingetragen sind. Änderungen ggf. speichern.
+4. Im Abschnitt **Key und Zertifikat hochladen** die Dateien auswählen:
+
+   | Feld | Pflicht | Beispiel |
+   |---|---|---|
+   | **Privater Schlüssel** | Ja | `_.cert.pem` oder `privkey.pem`, unverschlüsseltes PKCS#8-/RSA-/EC-PEM |
+   | **Leaf-Zertifikat** | Ja | `_cert.crt`, `cert.pem` oder `fullchain.pem` |
+   | **Intermediate CAs** | Nein | Eine oder mehrere `.crt`-/`.pem`-/`.der`-/`.cer`-Dateien, in Signaturreihenfolge |
+   | **Root CA** | Nein | `USERTrustRSACertificationAuthority.crt` |
+
+5. Auf **Dateien hochladen und konvertieren** klicken. Die Anwendung verifiziert die Zuordnung zwischen Private Key und Leaf-Zertifikat, erwartete SANs, Zeitgültigkeit und die mitgelieferte Kette; danach werden die bisherigen Formate (PEM, DER, PFX/P12, PKCS#7, PKCS#8 und Bundles) erzeugt und als **neue verschlüsselte Zertifikatsversion** gespeichert. Die Dienst-Checkboxen und API-Endpunkte funktionieren unverändert.
+
+**Wichtig:** Zertifikate werden sowohl als PEM als auch als DER akzeptiert, die Private-Key-Datei **derzeit nur unverschlüsselt als PEM**. Eine PEM-Fullchain im Feld „Leaf“ wird automatisch in Leaf und Intermediates aufgeteilt. Die Root-CA wird nicht automatisch aus dem Internet heruntergeladen. Maximal **12 MiB pro Upload** und **4 MiB pro Datei**. Der Browser muss über **HTTPS** auf die Anwendung zugreifen; Private Keys sind vertraulich.
+
+**Manuelle und automatische Zertifikate nicht vermischen:** Ist ein ACME-Profil aktiviert, steht der Upload erst nach Umstellung auf „Manuell / Web-Upload“ zur Verfügung. Sobald ein manueller Upload erfolgt ist, verhindert `source: manual` im Katalog, dass der alte Legacy-Handoff-Importer das neue Zertifikat alle fünf Minuten überschreibt. Für die spätere Rückkehr zum ACME-Betrieb das gewünschte ACME-Profil im Zertifikat auswählen und speichern. Bestehende Token und Dienstzuordnungen bleiben dabei erhalten.
+
+**Upgrade von v3.1.1:** Projektdateien bzw. Docker-Image aktualisieren, das vorhandene `/data`-Volume und die bisherige `.env` **weiterverwenden**. Kein neues `APP_SECRET` und kein neues `MASTER_KEY` generieren. Nur die Webanwendung muss für diese Erweiterung neu gebaut werden:
+
+```bash
+docker compose build certmanager
+docker compose up -d --no-deps certmanager
+```
+
+Bei Nutzung von GHCR muss zunächst der neue Stand über GitHub Actions gebaut und veröffentlicht werden; danach das neue Image-Tag in `CERTMANAGER_IMAGE` konfigurieren und mit `docker compose pull certmanager && docker compose up -d --no-deps certmanager` aktualisieren. Die GitHub-Actions-Datei ist weiterhin vorhanden.
 
 ## 2. ACME-Profile im Webinterface
 
@@ -171,4 +234,74 @@ go vet ./...
 python -m unittest discover -s scripts -p '*test*.py'
 ```
 
-Automatisiert getestet werden die Go-CMS-APIs, Login, Profile, Katalog, Formatkonvertierung und Zugriffskontrollen. Eine **echte ACME-Ausstellung, Certbot-Docker-Laufzeit, DNS-Provider-Anbindung und produktiver IIS-Deploy** benötigen einen Staging-Test in deiner Infrastruktur.
+Automatisiert getestet werden die Go-CMS-APIs, Login, Profile, Katalog, Upload von PEM-/DER-Zertifikaten und Private Keys, ungültige Uploads, Formatkonvertierung und Zugriffskontrollen. Eine **echte ACME-Ausstellung, Certbot-Docker-Laufzeit, DNS-Provider-Anbindung und produktiver IIS-Deploy** benötigen einen Staging-Test in deiner Infrastruktur.
+
+
+## 7. Docker-Images mit GitHub Actions (GHCR)
+
+Der Workflow `.github/workflows/docker-images.yml` baut und veröffentlicht zwei Images:
+
+- `ghcr.io/<OWNER>/<REPO>-app` – Go-Weboberfläche mit API
+- `ghcr.io/<OWNER>/<REPO>-certbot` – Certbot-Worker mit DNS-Cloudflare-Plugin und den eingebauten Skripten
+
+Das Suffix wird an den **GitHub-Reponamen** angehängt. Bei `firma/ucng-certmanager`
+sind das z. B. `ghcr.io/firma/ucng-certmanager-app` und
+`ghcr.io/firma/ucng-certmanager-certbot`.
+
+### Auslöser / Tags
+
+| Auslöser | Aktion | Tags |
+|---|---|---|
+| Pull Request | Beide Images bauen, Tests ausführen, **kein Push** | – |
+| Push auf `main` / `master` | Tests, Build und Push beider Images | `latest`, Branchname, `sha-<commit>` |
+| Git-Tag `v1.2.3` | Tests, Build und Push beider Images | `1.2.3`, `1.2`, `sha-<commit>` |
+| GitHub Actions → `Run workflow` | Tests, Build und Push (ausgewählter Ref) | Ref-abhängig |
+
+Beide Images werden für `linux/amd64` und `linux/arm64` gebaut. GitHub Actions
+benutzt den automatisch bereitgestellten `GITHUB_TOKEN`; ein eigener Registry-Token
+wird nicht benötigt. Das Workflow-Job-Recht `packages: write` erlaubt das
+Veröffentlichen. Für Repository- bzw. Organisationsregeln muss das Veröffentlichen
+von Packages ggf. separat erlaubt werden. Bei privaten Packages müssen sich
+Deployments vor dem Pull bei GHCR anmelden; bei öffentlichen Packages ist das
+nicht erforderlich.
+
+### Release bauen
+
+```bash
+git tag v3.1.0
+git push origin v3.1.0
+```
+
+Die Images werden anschließend als `:3.1.0` veröffentlicht. Ein Commit auf `main`
+aktualisiert dagegen `:latest` (Achtung: sich ändernder Tag). Für produktive
+Deployments lieber die Versionsnummer oder den Image-Digest verwenden.
+
+### Mit veröffentlichten Images starten
+
+Nach dem ersten erfolgreichen Workflow-Lauf z. B. folgende Variablen in `.env`
+eintragen (Owner und Repo-Namen durch die tatsächlichen, kleingeschriebenen
+Namen ersetzen):
+
+```dotenv
+CERTMANAGER_IMAGE=ghcr.io/firma/ucng-certmanager-app:3.1.0
+CERTBOT_IMAGE=ghcr.io/firma/ucng-certmanager-certbot:3.1.0
+```
+
+Anschließend:
+
+```bash
+docker compose --profile acme pull
+docker compose --profile acme up -d --no-build
+```
+
+Für **lokale Builds** die beiden `*_IMAGE`-Variablen weglassen und stattdessen
+`docker compose --profile acme up -d --build` aufrufen. Das normale Compose-Setup
+bleibt so unverändert benutzbar. Die Images enthalten **keine** `.env`, Tokens,
+ACME-Zugangsdaten oder private Schlüssel; diese kommen erst beim Deployment über
+Environment/Volumes hinzu. Für das Deployment mit Compose sind die lokal
+bereitgestellten `certbot-credentials/`, `acme-ca/`, `acme-hooks/` und `roots/`
+Verzeichnisse ggf. weiterhin notwendig.
+
+**Wichtig:** GHCR veröffentlicht Container-Images, deployt sie aber nicht und
+führt keine ACME-Zertifikatsausstellung durch. Dafür bleibt die laufende
+Certbot-Worker-Instanz mit ihren DNS-01-Credentials zuständig.

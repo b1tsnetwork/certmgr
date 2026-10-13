@@ -1,6 +1,33 @@
 services:
+  # Einmalige Rechtekorrektur für neu angelegte und bestehende Docker-Volumes.
+  # Die eigentliche Webanwendung bleibt danach unverändert unprivilegiert (UID 10001).
+  cert-data-init:
+    image: alpine:3.24
+    restart: "no"
+    read_only: true
+    network_mode: none
+    user: "0:0"
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    security_opt: ["no-new-privileges:true"]
+    command:
+      - sh
+      - -ec
+      - |
+        mkdir -p /data/certificates
+        chown -R 10001:10001 /data
+        chmod 0700 /data /data/certificates
+    volumes:
+      - cert-data:/data
+
   certmanager:
-    build: .
+    depends_on:
+      cert-data-init:
+        condition: service_completed_successfully
+    image: ${CERTMANAGER_IMAGE:-ghcr.io/b1tsnetwork/certmgr-app:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
     restart: unless-stopped
     read_only: true
     cap_drop: [ALL]
@@ -33,10 +60,15 @@ services:
   # One isolated Certbot worker manages all lineages. Activate via:
   # docker compose --profile acme up -d --build
   certbot:
-    image: certbot/dns-cloudflare:latest
+    image: ${CERTBOT_IMAGE:-ghcr.io/b1tsnetwork/certmgr-certbot:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.certbot
     profiles: [acme]
+    depends_on:
+      cert-data-init:
+        condition: service_completed_successfully
     restart: unless-stopped
-    entrypoint: ["python", "/opt/ucng/certbot-runner.py"]
     environment:
       ACME_RUN_INTERVAL: ${ACME_RUN_INTERVAL:-43200}
       ACME_INTERNAL_KID: ${ACME_INTERNAL_KID:-}
@@ -47,8 +79,6 @@ services:
       - letsencrypt-config:/etc/letsencrypt
       - letsencrypt-work:/var/lib/letsencrypt
       - letsencrypt-logs:/var/log/letsencrypt
-      - ./scripts/certbot-deploy-hook.sh:/opt/ucng/certbot-deploy-hook.sh:ro
-      - ./scripts/certbot-runner.py:/opt/ucng/certbot-runner.py:ro
       - ./certbot-credentials:/run/secrets:ro
       - ./acme-hooks:/hooks:ro
       - ./acme-ca:/run/acme-ca:ro

@@ -52,6 +52,7 @@ func (s *server) routes() http.Handler {
 	m.HandleFunc("POST /admin/tokens/revoke", s.protected(s.revokeToken))
 	m.HandleFunc("POST /admin/certificates", s.protected(s.saveCertificate))
 	m.HandleFunc("GET /admin/certificates/{name}", s.certificatePage)
+	m.HandleFunc("POST /admin/certificates/{name}/upload", s.protectedUpload(s.uploadCertificate))
 	m.HandleFunc("POST /admin/certificates/{name}", s.protected(s.saveCertificate))
 	m.HandleFunc("POST /admin/certificates/{name}/delete", s.protected(s.deleteCertificateAdmin))
 	m.HandleFunc("POST /admin/certificates/{name}/services", s.protected(s.createService))

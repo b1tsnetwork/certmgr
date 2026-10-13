@@ -11,12 +11,15 @@ func (s *server) certificatePage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin/login", 303)
 		return
 	}
+	s.certificatePageStatus(w, r, ss, 200, "")
+}
+func (s *server) certificatePageStatus(w http.ResponseWriter, r *http.Request, ss authSession, status int, uploadError string) {
 	def, ok := s.catalog.certificate(r.PathValue("name"))
 	if !ok {
 		http.NotFound(w, r)
 		return
 	}
-	d := viewData{Title: "Zertifikat verwalten · " + def.Name, CSRF: ss.CSRF, FormatOptions: formatOptions, Profiles: s.catalog.snapshot().Profiles}
+	d := viewData{Title: "Zertifikat verwalten · " + def.Name, CSRF: ss.CSRF, UploadError: uploadError, FormatOptions: formatOptions, Profiles: s.catalog.snapshot().Profiles}
 	d.Certificate = certificateView{Name: def.Name, Label: def.Label, Profile: def.Profile, Enabled: def.Enabled, ExpectedSAN: strings.Join(def.DNSNames, ", ")}
 	meta, _ := s.vault.load(def.Name, "")
 	d.FormatOptions = formatOptionsFor(meta)
@@ -31,13 +34,16 @@ func (s *server) certificatePage(w http.ResponseWriter, r *http.Request) {
 			d.Services = append(d.Services, displayService(svc, meta))
 		}
 	}
+	if r.URL.Query().Has("uploaded") {
+		d.Notice = "Zertifikatsdateien erfolgreich hochgeladen, geprüft und in alle Formate konvertiert."
+	}
 	if r.URL.Query().Has("saved") {
 		d.Notice = "Änderungen gespeichert."
 	}
 	if r.URL.Query().Has("deleted") {
 		d.Notice = "Dienst entfernt; zugehörige Tokens widerrufen."
 	}
-	s.template(w, 200, "certificate.html", d)
+	s.template(w, status, "certificate.html", d)
 }
 func (s *server) saveCertificate(w http.ResponseWriter, r *http.Request, _ authSession) {
 	name := r.PostForm.Get("name")
@@ -55,6 +61,21 @@ func (s *server) saveCertificate(w http.ResponseWriter, r *http.Request, _ authS
 		return
 	}
 	newDef := certificateDefinition{Name: name, Profile: r.PostForm.Get("profile"), Label: strings.TrimSpace(r.PostForm.Get("label")), DNSNames: sanitizeSANInput(r.PostForm.Get("sans")), Enabled: r.PostForm.Get("enabled") == "yes"}
+	if existing {
+		// Preserve Web-Upload mode across label/SAN edits. A CA switch makes
+		// the ACME worker responsible again; returning to manual does not
+		// silently enable an obsolete legacy handoff.
+		newDef.Source = old.Source
+		if newDef.Profile != old.Profile {
+			if newDef.Profile == "" {
+				newDef.Source = "manual"
+			} else {
+				newDef.Source = ""
+			}
+		}
+	} else if newDef.Profile == "" {
+		newDef.Source = "manual"
+	}
 	if !existing && r.PostForm.Get("enabled") == "" {
 		newDef.Enabled = true
 	}
@@ -69,7 +90,7 @@ func (s *server) saveCertificate(w http.ResponseWriter, r *http.Request, _ authS
 	}
 	// Import only after the request is validated and stored. Import failure is
 	// reported on the dashboard, never accepted as a reason to skip the record.
-	if newDef.Enabled {
+	if newDef.Enabled && newDef.Source != "manual" {
 		if e := s.importCertificate(name); e != nil {
 			s.mu.Lock()
 			s.status[name] = e.Error()

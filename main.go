@@ -39,12 +39,14 @@ type server struct {
 	auth      *authState
 	templates *template.Template
 	mu        sync.RWMutex
+	importMu  sync.Mutex
 	status    map[string]string
 }
 
 type viewData struct {
 	Title           string
 	CSRF            string
+	UploadError     string
 	Error           string
 	Notice          string
 	Token           string
@@ -100,7 +102,7 @@ func main() {
 }
 
 func loadConfig() (config, error) {
-	c := config{addr: env("LISTEN_ADDR", "127.0.0.1:8080"), dataDir: env("DATA_DIR", "./data"), sourceDir: env("CERT_SOURCE_DIR", "./handoff"), rootsDir: env("ROOT_CA_DIR", "./roots"), scratchDir: env("SCRATCH_DIR", os.TempDir()), adminUser: env("ADMIN_USER", "admin"), adminPassword: os.Getenv("ADMIN_PASSWORD"), cookieSecure: os.Getenv("COOKIE_SECURE") == "true", interval: 5 * time.Minute}
+	c := config{addr: env("LISTEN_ADDR", "127.0.0.1:8089"), dataDir: env("DATA_DIR", "./data"), sourceDir: env("CERT_SOURCE_DIR", "./handoff"), rootsDir: env("ROOT_CA_DIR", "./roots"), scratchDir: env("SCRATCH_DIR", os.TempDir()), adminUser: env("ADMIN_USER", "admin"), adminPassword: os.Getenv("ADMIN_PASSWORD"), cookieSecure: os.Getenv("COOKIE_SECURE") == "true", interval: 5 * time.Minute}
 	if pwFile := os.Getenv("ADMIN_PASSWORD_FILE"); pwFile != "" {
 		b, err := os.ReadFile(pwFile)
 		if err != nil {
@@ -312,9 +314,14 @@ func (s *server) syncAll() {
 	}
 }
 func (s *server) importCertificate(name string) error {
+	s.importMu.Lock()
+	defer s.importMu.Unlock()
 	def, ok := s.catalog.certificate(name)
 	if !ok || !def.Enabled {
 		return errors.New("Zertifikat nicht registriert oder deaktiviert")
+	}
+	if def.Source == "manual" {
+		return nil // Web-Uploads werden nicht durch den Legacy-Importer ersetzt.
 	}
 	src := filepath.Join(s.cfg.sourceDir, name, "current")
 	// Profile-separated handoff. Legacy flat handoff remains only for

@@ -20,6 +20,7 @@ type certificateDefinition struct {
 	Name     string   `json:"name"`
 	Label    string   `json:"label"`
 	Profile  string   `json:"profile,omitempty"`
+	Source   string   `json:"source,omitempty"`
 	DNSNames []string `json:"expected_dns_names"`
 	Enabled  bool     `json:"enabled"`
 }
@@ -147,7 +148,7 @@ func normalizeFiles(files []string) ([]string, error) {
 	return out, nil
 }
 func validCertDefinition(v certificateDefinition) error {
-	if !safeName(v.Name) || (v.Profile != "" && !safeName(v.Profile)) || len(v.Label) > 100 || len(v.DNSNames) == 0 || len(v.DNSNames) > 50 {
+	if !safeName(v.Name) || (v.Profile != "" && !safeName(v.Profile)) || (v.Source != "" && v.Source != "manual") || (v.Source == "manual" && v.Profile != "") || len(v.Label) > 100 || len(v.DNSNames) == 0 || len(v.DNSNames) > 50 {
 		return errors.New("Name, Label oder SAN-Liste ungültig")
 	}
 	seen := map[string]bool{}
