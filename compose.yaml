@@ -1,0 +1,65 @@
+services:
+  certwatch:
+    image: ${CERTWATCH_IMAGE:-certwatch:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      ACME_ENABLED: ${ACME_ENABLED:-false}
+      ACME_CATALOG_PATH: /app/acme-catalog/catalog.json
+      ACME_STATUS_PATH: /app/acme-status/status.json
+      CERTWATCH_HANDOFF_PATH: /app/handoff
+      CERTWATCH_PRIVATE_EXPORT_ENABLED: ${CERTWATCH_PRIVATE_EXPORT_ENABLED:-false}
+      CERTWATCH_VAULT_KEY: ${CERTWATCH_VAULT_KEY:-}
+      LEGACY_PFX: ${CERTWATCH_LEGACY_PFX:-false}
+      EXPORT_UNENCRYPTED_KEYS: ${CERTWATCH_EXPORT_UNENCRYPTED_KEYS:-false}
+      TZ: Europe/Berlin
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp
+    volumes:
+      - certwatch_data:/app/data
+      - acme_catalog:/app/acme-catalog
+      - acme_status:/app/acme-status:ro
+      - certbot_handoff:/app/handoff:ro
+
+  # Optional: docker compose --profile acme up -d --build
+  # Monitoring itself does not depend on Certbot.
+  certbot:
+    profiles: [acme]
+    image: ${CERTWATCH_ACME_IMAGE:-certwatch-acme:local}
+    build:
+      context: .
+      dockerfile: Dockerfile.acme
+    restart: unless-stopped
+    environment:
+      ACME_CATALOG: /catalog/catalog.json
+      ACME_STATUS: /status/status.json
+      ACME_RUN_INTERVAL: ${ACME_RUN_INTERVAL:-43200}
+      ACME_INTERNAL_KID: ${ACME_INTERNAL_KID:-}
+      ACME_INTERNAL_HMAC: ${ACME_INTERNAL_HMAC:-}
+    volumes:
+      - acme_catalog:/catalog:ro
+      - acme_status:/status
+      - certbot_config:/etc/letsencrypt
+      - certbot_work:/var/lib/letsencrypt
+      - certbot_logs:/var/log/letsencrypt
+      - certbot_handoff:/handoff
+      - ./certbot-credentials:/run/secrets:ro
+      - ./acme-hooks:/hooks:ro
+      - ./acme-ca:/run/acme-ca:ro
+
+volumes:
+  certwatch_data:
+  acme_catalog:
+  acme_status:
+  certbot_config:
+  certbot_work:
+  certbot_logs:
+  certbot_handoff:

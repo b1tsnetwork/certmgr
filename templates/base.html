@@ -1,0 +1,24 @@
+{{define "base.html"}}<!doctype html>
+<html lang="de"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+{{/* Vollständiger Seiten-Refresh nur auf reinen Anzeigeseiten. Insbesondere ACME enthält Formulare mit ungespeicherten Eingaben. */}}
+{{if or (eq .Page "dashboard") (eq .Page "target-detail")}}<meta http-equiv="refresh" content="30">{{end}}
+<title>{{.Title}} · CertWatch</title><link rel="stylesheet" href="/static/style.css">
+</head><body>
+{{if ne .Page "login"}}
+<div class="layout">
+<aside class="sidebar">
+<a class="brand" href="/"><span class="brand-icon">◈</span><span>CertWatch<small>TLS Certificate Monitor</small></span></a>
+<nav aria-label="Hauptnavigation"><a {{if eq .Page "dashboard"}}class="active"{{end}} href="/">▦ &nbsp; Dashboard</a>{{if .CanEdit}}<a {{if eq .Page "target-form"}}class="active"{{end}} href="/targets/new">＋ &nbsp; Website hinzufügen</a>{{end}}<a {{if eq .Page "roots"}}class="active"{{end}} href="/roots">⛨ &nbsp; Stammzertifikate</a><a {{if eq .Page "systems"}}class="active"{{end}} href="/systems">▣ &nbsp; Systeme</a><a {{if eq .Page "dependencies"}}class="active"{{end}} href="/dependencies">◇ &nbsp; Abhängigkeiten</a><a {{if eq .Page "downloads"}}class="active"{{end}} href="/downloads">↓ &nbsp; Zertifikate herunterladen</a><a {{if eq .Page "acme"}}class="active"{{end}} href="/acme">↻ &nbsp; ACME / Certbot</a>{{if .IsAdmin}}<a {{if eq .Page "manual"}}class="active"{{end}} href="/manual">⇧ &nbsp; Manueller Import</a><a {{if eq .Page "distribution"}}class="active"{{end}} href="/distribution">⇩ &nbsp; Zertifikatsabruf</a>{{end}}<a {{if eq .Page "settings"}}class="active"{{end}} href="/settings">⚙ &nbsp; Einstellungen</a>{{if .IsAdmin}}<a {{if eq .Page "users"}}class="active"{{end}} href="/users">♙ &nbsp; Benutzer</a>{{end}}</nav>
+<div class="side-foot"><strong class="signed-user">{{.CurrentUser}} · {{.CurrentRole}}</strong><br><span class="online-dot"></span> Monitoring aktiv<br><small>Automatische Prüfung alle 15 Sekunden auf fällige Ziele</small>
+<form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="logout" type="submit">Abmelden ↗</button></form>
+</div></aside>
+<main class="main"><div class="topline"><span>ÜBERWACHUNG / {{.Title}}</span><span class="topline-right">TLS &amp; PKI · <span class="live-dot"></span> Aktiv</span></div>
+{{if .Error}}<div class="alert error" role="alert">{{.Error}}</div>{{end}}{{if .Notice}}<div class="alert success" role="status">{{.Notice}}</div>{{end}}
+{{template "content" .}}
+<footer class="footer">CertWatch · Zertifikatsprüfung über TLS ohne HTTP-Abruf · OCSP / CRL werden nicht geprüft</footer>
+</main></div>
+{{else}}
+{{template "content" .}}
+{{end}}
+</body></html>{{end}}

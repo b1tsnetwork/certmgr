@@ -1,28 +1,17 @@
-# Keep local credentials, private keys, volumes and development state out of build context.
 .git
 .github
 .env
 .env.*
 !.env.example
-secrets/
+**/data
+**/*.zip
+**/*.tar.gz
+certwatch-vault.key
 certbot-credentials/
 acme-ca/
 acme-hooks/
-roots/
-data/
-handoff/
-scratch/
-converted/
+*.log
+
+# Python test cache and tests
 __pycache__/
 *.pyc
-*.pfx
-*.p12
-*.key
-*.pem
-# No need to ship documentation or local test results to the builder.
-README*
-RELEASE-NOTES*
-LICENSE
-NOTICE.md
-*_test.go
-scripts/test_*.py

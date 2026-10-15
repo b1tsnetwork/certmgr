@@ -1,8 +1,0 @@
-# Certbot-Worker mit DNS-Cloudflare-Plugin und eingebauten UCNG-Skripten.
-# Ein Image für alle ACME-Profile; die Profile werden aus catalog.json gelesen.
-FROM certbot/dns-cloudflare:v5.7.0
-
-COPY --chmod=0755 scripts/certbot-runner.py /opt/ucng/certbot-runner.py
-COPY --chmod=0755 scripts/certbot-deploy-hook.sh /opt/ucng/certbot-deploy-hook.sh
-
-ENTRYPOINT ["python", "/opt/ucng/certbot-runner.py"]

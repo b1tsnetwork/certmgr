@@ -1,7 +1,10 @@
+#!/usr/bin/env python3
+"""Unit tests for isolated DNS update credential generation."""
 import importlib.util
-import os
 from pathlib import Path
-import tempfile
+from tempfile import TemporaryDirectory
+import os
+import stat
 import unittest
 from unittest.mock import patch
 
@@ -9,43 +12,61 @@ spec = importlib.util.spec_from_file_location('certbot_runner', Path(__file__).w
 runner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runner)
 
-class RunnerTests(unittest.TestCase):
-    def test_profiles_have_separate_certbot_stores(self):
-        base = {
-            'email': 'acme@example.test',
-            'challenge': 'cloudflare',
-            'credentials_file': '/run/secrets/cloudflare.ini',
-        }
-        cert = {'name': 'wildcard-test', 'expected_dns_names': ['*.example.test', 'example.test']}
-        with patch.object(runner, 'restricted_file', return_value='/run/secrets/cloudflare.ini'):
-            prod, _ = runner.build_command({**base, 'id': 'production', 'directory_url': 'https://acme.example.test/directory'}, cert)
-            stage, _ = runner.build_command({**base, 'id': 'staging', 'directory_url': 'https://staging.example.test/directory'}, cert)
-        self.assertIn('/etc/letsencrypt/profiles/production', prod)
-        self.assertIn('/etc/letsencrypt/profiles/staging', stage)
-        self.assertNotEqual(prod[prod.index('--config-dir') + 1], stage[stage.index('--config-dir') + 1])
-        self.assertEqual(prod.count('-d'), 2)
-        self.assertIn('https://staging.example.test/directory', stage)
 
-    def test_eab_env_and_hook_controls(self):
-        p = {'id': 'internal', 'directory_url': 'https://internal.test/acme/directory',
-             'email': 'ops@example.test', 'challenge': 'manual-dns-hooks',
-             'auth_hook': '/hooks/auth.sh', 'cleanup_hook': '/hooks/cleanup.sh',
-             'eab_kid_env': 'ACME_INTERNAL_KID', 'eab_hmac_env': 'ACME_INTERNAL_HMAC'}
-        with patch.object(runner, 'restricted_file', side_effect=lambda value, root: value), \
-             patch.dict(os.environ, {'ACME_INTERNAL_KID': 'kid', 'ACME_INTERNAL_HMAC': 'mac'}):
-            cmd, env = runner.build_command(p, {'name': 'test', 'expected_dns_names': ['example.test']})
-        self.assertIn('--manual-auth-hook', cmd)
-        self.assertEqual(cmd[cmd.index('--eab-kid') + 1], 'kid')
-        self.assertEqual(env['UCNG_ACME_PROFILE'], 'internal')
+class RFC2136Tests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.directory = Path(self.tmp.name)
+        self.secret_file = self.directory / 'tsig.ini'
+        self.secret_file.write_text('dns_rfc2136_name = acme-update.\n'
+                                    'dns_rfc2136_secret = abc123+/==\n'
+                                    'dns_rfc2136_algorithm = HMAC-SHA512\n'
+                                    'dns_rfc2136_server = 192.0.2.20\n')
+        self.profile = {'id': 'internal', 'label': 'Internal', 'directory_url': 'https://acme.example.com/directory',
+                        'email': 'admin@example.com', 'challenge': 'rfc2136',
+                        'credentials_file': '/run/secrets/tsig.ini', 'dns_server': '10.20.30.40',
+                        'dns_port': 5353, 'dns_propagation_seconds': 12}
 
-    def test_invalid_issuer_or_profile_rejected(self):
-        cert = {'name': 'test', 'expected_dns_names': ['example.test']}
-        p = {'id': 'test', 'directory_url': 'http://internal.test/acme', 'email': 'a@b.test',
-             'challenge': 'cloudflare', 'credentials_file': '/run/secrets/cf.ini'}
-        with self.assertRaises(ValueError): runner.build_command(p, cert)
-        p['directory_url'] = 'https://internal.test/acme'
-        cert['name'] = '../not-safe'
-        with self.assertRaises(ValueError): runner.build_command(p, cert)
+    def test_generated_file_uses_webui_server_and_keeps_secret_in_worker(self):
+        result, propagation = runner.prepare_rfc2136_credentials(self.profile, self.secret_file, self.directory / 'profiles' / 'internal')
+        content = Path(result).read_text()
+        self.assertIn('dns_rfc2136_server = 10.20.30.40', content)
+        self.assertNotIn('192.0.2.20', content)
+        self.assertIn('dns_rfc2136_port = 5353', content)
+        self.assertIn('dns_rfc2136_secret = abc123+/==', content)
+        self.assertIn('dns_rfc2136_algorithm = HMAC-SHA512', content)
+        self.assertEqual(propagation, 12)
+        self.assertEqual(stat.S_IMODE(os.stat(result).st_mode), 0o600)
+
+    def test_invalid_ip_and_port_rejected(self):
+        for v in ['localhost', '10.20.30.40;echo pwned', '0.0.0.0']:
+            with self.subTest(value=v):
+                data = dict(self.profile, dns_server=v)
+                with self.assertRaises(ValueError):
+                    runner.prepare_rfc2136_credentials(data, self.secret_file, self.directory / 'out')
+        data = dict(self.profile, dns_port=65536)
+        with self.assertRaises(ValueError):
+            runner.prepare_rfc2136_credentials(data, self.secret_file, self.directory / 'out')
+
+    def test_missing_tsig_secret_rejected(self):
+        self.secret_file.write_text('dns_rfc2136_name = name.\n')
+        with self.assertRaises(ValueError):
+            runner.prepare_rfc2136_credentials(self.profile, self.secret_file, self.directory / 'out')
+
+    def test_command_has_rfc2136_plugin_with_file_and_no_secret_in_args(self):
+        def fake_restricted(path, prefix):
+            self.assertEqual(path, '/run/secrets/tsig.ini')
+            self.assertEqual(prefix, '/run/secrets/')
+            return str(self.secret_file)
+        with patch.object(runner, 'restricted_file', side_effect=fake_restricted), \
+                patch.object(runner, 'prepare_rfc2136_credentials', return_value=('/private/credentials.ini', 12)):
+            command, environment = runner.build_command(self.profile, {'name': 'web', 'expected_dns_names': ['server.example.com']})
+        self.assertIn('--dns-rfc2136', command)
+        self.assertIn('/private/credentials.ini', command)
+        self.assertIn('--dns-rfc2136-propagation-seconds', command)
+        self.assertNotIn('abc123+/==', repr(command))
+        self.assertEqual(environment['CERTWATCH_ACME_PROFILE'], 'internal')
 
 if __name__ == '__main__':
     unittest.main()

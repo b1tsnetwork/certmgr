@@ -1,12 +1,22 @@
 .env
-secrets/*
-!secrets/.gitkeep
+.env.*
+!.env.example
+/data/
+certwatch-vault.key
 certbot-credentials/*
-!certbot-credentials/.gitkeep
+certbot-credentials/.gitkeep
+acme-hooks/*
+!acme-hooks/.gitkeep
 acme-ca/*
 !acme-ca/.gitkeep
-/data/
-/handoff/
-/scratch/
+*.log
+certwatch
+
+# Python test cache
 __pycache__/
 *.pyc
+
+# Client secrets and local distributed certificate copies
+*.token
+*.key
+/certwatch-tls/

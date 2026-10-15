@@ -1,0 +1,25 @@
+{{define "content"}}
+<div class="heading-row"><div><p class="eyebrow">ZERTIFIKATE / OFFLINE &amp; IMPORT</p><h1>Manueller Zertifikatsimport</h1><p class="muted">Vorhandene PEM- oder PFX/P12-Zertifikate mit Schlüssel importieren, prüfen, verschlüsselt speichern und automatisch in zahlreiche Formate konvertieren.</p></div><a class="button ghost" href="/distribution">⇩ API-Tokens verwalten</a></div>
+{{if not .ManualVaultEnabled}}<div class="alert error">Für manuelle Zertifikate ist ein dauerhafter Vault-Schlüssel erforderlich. <code>CERTWATCH_VAULT_KEY</code> konfigurieren (siehe README) und CertWatch neu starten. Bereits importierte Zertifikate bleiben ohne ihren ursprünglichen Schlüssel unlesbar.</div>{{end}}
+<div class="alert info">PEM-Dateien oder eine passwortgeschützte PFX/P12-Datei werden unterstützt. Der Import prüft die Schlüsselzugehörigkeit, die CA-Signaturen der angegebenen Kette und die aktuellen Gültigkeitsdaten. <strong>Der Root-CA wird nicht automatisch vertraut</strong>. Private Artefakte benötigen zusätzlich eine ausdrückliche Export-Freigabe und einen entsprechenden Client-Token.</div>
+<section class="panel"><div class="panel-header"><h2>Zertifikat hinzufügen oder neue Version importieren</h2></div>
+<form class="panel-inner" method="post" action="/manual/upload" enctype="multipart/form-data">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<div class="form-grid"><div class="field"><label for="mc_name">Zertifikats-ID</label><input id="mc_name" name="name" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9_.-]*" placeholder="intranet-web"><small>Bei erneutem Import unter derselben ID wird eine neue Version veröffentlicht.</small></div>
+<div class="field"><label for="mc_label">Bezeichnung</label><input id="mc_label" name="label" required maxlength="120" placeholder="Intranet Webserver"></div>
+<div class="field"><label for="mc_cert">Leaf-Zertifikat (PEM) *</label><input id="mc_cert" name="cert" type="file" accept=".pem,.crt,.cer"></div>
+<div class="field"><label for="mc_key">Private Key (PEM) *</label><input id="mc_key" name="key" type="file" accept=".pem,.key"></div>
+<div class="field"><label for="mc_chain">Intermediate-Kette (PEM, optional)</label><input id="mc_chain" name="chain" type="file" accept=".pem,.crt"></div>
+<div class="field"><label for="mc_root">Root-CA (PEM, optional)</label><input id="mc_root" name="root" type="file" accept=".pem,.crt"></div></div>
+<hr><p class="muted small"><strong>Alternative:</strong> eine vorhandene PFX/P12-Datei statt der PEM-Dateien hochladen.</p>
+<div class="form-grid"><div class="field"><label for="mc_pfx">PFX/P12-Datei</label><input id="mc_pfx" name="pfx" type="file" accept=".pfx,.p12"></div>
+<div class="field"><label for="mc_pfx_password">PFX-Importpasswort</label><input id="mc_pfx_password" name="pfx_password" type="password" autocomplete="off"></div></div>
+<p class="muted small">Automatisch erzeugt werden u. a. PEM, DER, CER, CRT, PFX/P12 mit zufällig generiertem Passwort, PKCS#7/P7B, PKCS#8, öffentliche und private Key-Dateien, Fullchain und CA-Bundles.</p>
+<button class="button primary" type="submit" {{if not .ManualVaultEnabled}}disabled{{end}}>Zertifikat importieren und konvertieren</button></form></section>
+<section class="panel"><div class="panel-header"><h2>Manuell verwaltete Zertifikate</h2><span class="count">{{len .ManualCertificates}} ZERTIFIKATE</span></div><div class="acme-list">
+{{range .ManualCertificates}}<div class="acme-entry"><div class="acme-entry-title"><strong>{{.Label}}</strong><span class="subline code">manual / {{.Name}}</span><a class="text-link small" href="/dependencies/certificates/manual/{{.Name}}">Systemzuordnungen &amp; Abhängigkeiten →</a>{{if .Available}}<span class="subline">Gültig bis {{date .Meta.NotAfter}} · Version {{.Meta.Version}}</span><span class="subline">{{len .Public}} öffentliche · {{len .Private}} private Formate</span>{{else}}<span class="subline">{{.Error}}</span>{{end}}</div><div class="acme-entry-status"><span class="pill {{if .Available}}{{.Status}}{{else}}red{{end}}">{{if .Available}}{{.StatusLabel}}{{else}}Nicht lesbar{{end}}</span></div>
+<form method="post" action="/manual/{{.Name}}/delete"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="button danger compact" type="submit">Löschen</button></form></div>
+{{if .Available}}<div class="panel-inner"><details><summary>Erzeugte Formate anzeigen</summary><p class="muted small">Öffentlich (mit Public-Token): {{range .Public}}<code>{{.Name}}</code> {{end}}</p><p class="muted small">Privat (nur mit Private-Token): {{range .Private}}<code>{{.Name}}</code> {{end}}</p><p class="muted small">API: <code>/api/v1/distribution/manual/{{.Name}}/manifest</code></p></details></div>{{end}}
+{{else}}<div class="empty mini">Noch keine manuellen Zertifikate importiert.</div>{{end}}
+</div></section>
+{{end}}

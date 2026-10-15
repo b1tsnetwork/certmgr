@@ -1,3 +1,3 @@
-module ucng-certmanager
+module example.com/certwatch
 
-go 1.27
+go 1.23
