@@ -1,4 +1,4 @@
-FROM certbot/dns-cloudflare:v5.8.0
+FROM certbot/dns-cloudflare:v5.9.0
 # Match the Certbot image version for the RFC2136 plugin.
 RUN python -m pip install --no-cache-dir "certbot-dns-rfc2136==5.8.0"
 COPY scripts/certbot-runner.py /opt/certwatch/certbot-runner.py
